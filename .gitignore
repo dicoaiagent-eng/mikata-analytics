@@ -1,0 +1,18 @@
+venv/
+__pycache__/
+*.pyc
+.env
+client_secret.json
+token.json
+service_account.json
+.streamlit/secrets.toml
+log.txt
+logs/
+*.log
+dashboard_v1_backup.py
+dashboard_v2_backup.py
+secrets.generated.toml
+.streamlit/secrets.generated.toml
+
+# ローカル専用Claude設定
+.claude/settings.local.json

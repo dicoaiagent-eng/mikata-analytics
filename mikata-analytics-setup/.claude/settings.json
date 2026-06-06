@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(cd:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(echo:*)",
+      "Bash(grep:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(pip:*)",
+      "Bash(pip3:*)",
+      "Bash(./venv/bin/python:*)",
+      "Bash(./venv/bin/pip:*)",
+      "Bash(source:*)",
+      "Bash(chmod:*)",
+      "Bash(touch:*)",
+      "Bash(mv ~/Downloads/*:*)",
+      "Bash(cp:*)",
+      "Bash(gcloud services enable:*)",
+      "Bash(gcloud services list:*)",
+      "Bash(gcloud config:*)",
+      "Bash(gcloud auth list:*)",
+      "Bash(crontab -l)",
+      "Bash(crontab:*)",
+      "Bash(caffeinate:*)",
+      "Bash(pmset -g)",
+      "Read(~/mikata-analytics/**)",
+      "Write(~/mikata-analytics/**)",
+      "Edit(~/mikata-analytics/**)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(rm -r:*)",
+      "Read(~/mikata-analytics/token.json)",
+      "Read(~/mikata-analytics/client_secret.json)",
+      "Read(~/mikata-analytics/service_account.json)",
+      "Read(~/mikata-analytics/.env)"
+    ]
+  },
+  "env": {
+    "DISABLE_TELEMETRY": "1"
+  }
+}
