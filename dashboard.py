@@ -136,10 +136,13 @@ def fetch_live(video_ids):
     失敗時は (None, {}) を返し、呼び出し側でシート値にフォールバックする。
     """
     import fetch_analytics as fa
+    if not config.CHANNEL_ID:
+        st.warning("ライブ取得スキップ: CHANNEL_ID が空です。SecretsのCHANNEL_ID（[gcp_service_account]より上）を確認し、Save→再起動してください。")
+        return None, {}
     try:
         return fa.get_channel_stats(), fa.get_video_stats(list(video_ids))
     except Exception as e:  # noqa: BLE001
-        st.warning(f"ライブ取得に失敗。シート値(日次)へフォールバックします: {e}")
+        st.warning(f"ライブ取得に失敗（{type(e).__name__}: {e}）。シート値(日次)へフォールバックします。")
         return None, {}
 
 

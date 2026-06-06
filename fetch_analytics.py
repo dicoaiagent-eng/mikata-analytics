@@ -108,7 +108,10 @@ def get_channel_stats():
     res = _yt_data.channels().list(
         part="statistics", id=config.CHANNEL_ID,
     ).execute()
-    s = res["items"][0]["statistics"]
+    items = res.get("items")
+    if not items:  # チャンネルが見つからない（CHANNEL_IDが空/誤り）
+        raise RuntimeError(f"channel not found (CHANNEL_ID 長さ={len(config.CHANNEL_ID or '')})")
+    s = items[0]["statistics"]
     return {
         "subscribers": int(s.get("subscriberCount", 0)),
         "total_views": int(s.get("viewCount", 0)),
@@ -122,7 +125,7 @@ def get_video_stats(video_ids):
     for i in range(0, len(video_ids), 50):
         chunk = video_ids[i:i + 50]
         res = _yt_data.videos().list(part="statistics", id=",".join(chunk)).execute()
-        for it in res["items"]:
+        for it in res.get("items", []):
             st = it["statistics"]
             stats[it["id"]] = {
                 "views": int(st.get("viewCount", 0)),
