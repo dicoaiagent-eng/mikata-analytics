@@ -3,9 +3,11 @@ import gspread
 from datetime import date
 import config
 
+# 流入元の列。YouTube Analytics の insightTrafficSourceType に正しく対応させる:
+#   ブラウズ=SUBSCRIBER(ホーム/ブラウズ機能) / 関連=RELATED_VIDEO / 広告=ADVERTISING(有料)
 SNAP_HEADER = [
     "取得日", "video_id", "動画タイトル", "公開日", "経過日数", "総再生数",
-    "検索流入数", "ブラウズ流入数", "関連流入数", "外部流入数", "登録者流入数", "平均視聴時間(秒)",
+    "検索流入数", "ブラウズ流入数", "関連流入数", "外部流入数", "広告流入数", "平均視聴時間(秒)",
     "公開曜日", "公開時刻", "video_type",
 ]
 TERM_HEADER = ["取得日", "video_id", "経過日数", "検索キーワード", "流入数"]
@@ -88,9 +90,9 @@ def build_snapshot_row(video, traffic_rows, days, weekday="", pub_time="", video
     return [
         str(date.today()), video["video_id"], video["title"],
         video["published"], days, sum(views.values()),
-        views.get("YT_SEARCH", 0), views.get("BROWSE", 0),
-        views.get("SUGGESTED_VIDEO", 0), views.get("EXT_URL", 0),
-        views.get("SUBSCRIBER", 0), avg.get("YT_SEARCH", ""),
+        views.get("YT_SEARCH", 0), views.get("SUBSCRIBER", 0),      # 検索 / ブラウズ(ホーム)
+        views.get("RELATED_VIDEO", 0), views.get("EXT_URL", 0),     # 関連 / 外部
+        views.get("ADVERTISING", 0), avg.get("YT_SEARCH", ""),      # 広告(有料) / 検索平均視聴秒
         weekday, pub_time, video_type,
     ]
 

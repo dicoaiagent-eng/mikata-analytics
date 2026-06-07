@@ -21,18 +21,22 @@ def run():
     videos = fa.get_all_videos()
     end = fa.yesterday_str()
 
-    # 追跡対象（公開60日以内）の動画長をまとめて取得し video_type 判定に使う
+    # 追跡対象（公開60日以内）。詳細を取得し「公開(public)」動画のみに限定。
+    # 限定公開/非公開（先方確認用など）は数値データに含めない。
     in_range = [v for v in videos if 0 <= fa.days_since(v["published"]) <= config.MAX_TRACK_DAYS]
-    durations = fa.get_durations([v["video_id"] for v in in_range])
+    details = fa.get_video_details([v["video_id"] for v in in_range])
+    public = [v for v in in_range
+              if details.get(v["video_id"], {}).get("privacy_status") == "public"]
+    print(f"対象: 公開60日以内 {len(in_range)} 本中 public {len(public)} 本のみ収集")
 
     snap_batch, term_batch, metrics_batch = [], [], []
-    for v in in_range:
+    for v in public:
         try:
             days = fa.days_since(v["published"])
             traffic = fa.get_traffic_by_source(v["video_id"], v["published"], end)
             weekday = fa.published_weekday(v["published_at"])
             pub_time = fa.published_time(v["published_at"])
-            vtype = fa.detect_video_type(v["video_id"], durations.get(v["video_id"], 0))
+            vtype = fa.detect_video_type(v["video_id"], details.get(v["video_id"], {}).get("duration_sec", 0))
             snap_batch.append(ws.build_snapshot_row(v, traffic, days, weekday, pub_time, vtype))
             terms = fa.get_search_terms(v["video_id"], v["published"], end)
             term_batch.extend(ws.build_term_rows(v["video_id"], terms, days))

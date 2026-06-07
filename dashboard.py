@@ -211,10 +211,12 @@ def main():
     include_noise = _sidebar(master, snap)
 
     latest = ins.latest_snapshot(snap)
-    # ノイズ除外（デフォルト）: 外部流入を総再生数から差し引いた値を標準表示
-    if not include_noise and not latest.empty and "外部流入数" in latest.columns:
+    # ノイズ除外（デフォルト）: 外部流入＋広告(有料)を総再生数から差し引いてオーガニック化
+    if not include_noise and not latest.empty:
         latest = latest.copy()
-        latest["総再生数"] = (latest["総再生数"] - latest["外部流入数"].fillna(0)).clip(lower=0)
+        noise = latest.get("外部流入数", 0).fillna(0) if "外部流入数" in latest else 0
+        ads = latest.get("広告流入数", 0).fillna(0) if "広告流入数" in latest else 0
+        latest["総再生数"] = (latest["総再生数"] - noise - ads).clip(lower=0)
     latest_ret = ins.with_retention(latest, master) if not latest.empty else pd.DataFrame()
     # 本物の視聴維持率(averageViewPercentage)・登録獲得・登録転換率を統合
     if not latest_ret.empty:
@@ -250,10 +252,10 @@ def _sidebar(master, snap):
         st.divider()
         include_noise = st.toggle(
             "ノイズ流入を含める", value=False,
-            help="外部流入（他サイト/共有リンク等）を集計に含める。"
-                 "OFF（既定）では外部流入を除外した値を標準表示します。",
+            help="外部流入（他サイト/共有リンク）と広告（有料）を集計に含める。"
+                 "OFF（既定）ではこれらを除外したオーガニック値を標準表示します。",
         )
-        st.caption("既定では**外部流入を除外**して集計しています。")
+        st.caption("既定では**外部流入と広告（有料）を除外**＝オーガニックで集計しています。")
         st.divider()
         if st.button("データを再取得（キャッシュ更新）", width="stretch"):
             st.cache_data.clear()
@@ -307,7 +309,7 @@ def _tab_summary(master, channel_hist, search_inflow_total):
 def _tab_catalog(master, latest_ret, include_noise):
     with st.container(border=True):
         st.subheader("動画カタログ")
-        suffix = "（外部流入を含む）" if include_noise else "（外部流入を除外）"
+        suffix = "（外部・広告を含む）" if include_noise else "（外部・広告を除外）"
         st.caption(f"サムネイル付き一覧。シリーズ・話数で絞り込み、列ヘッダで並べ替え可能。実績は最新日次{suffix}。")
 
         f = st.columns(2)
@@ -765,7 +767,7 @@ def _tab_analysis(master, latest_ret, include_noise):
     if latest_ret.empty:
         st.info("分析に使える実績データがまだありません。")
         return
-    st.caption(("外部流入を含む集計" if include_noise else "外部流入を除外した集計（既定）")
+    st.caption(("外部・広告を含む集計" if include_noise else "外部・広告を除外した集計（既定）")
                + "。代表値は中央値、各比較に n を併記し n<5 は参考値。")
     if len(latest_ret) < MIN_SAMPLES:
         st.warning(f"実績データが {len(latest_ret)} 本と少ないため、以下は傾向の示唆としてご覧ください。")
