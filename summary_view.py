@@ -161,7 +161,7 @@ html,body{color:var(--ink);
     <div class="pills" id="rangePills"></div>
     <div class="pills grp" id="typePills"></div>
     <div class="spacer"></div>
-    <div class="chip">外部・共有流入を除く</div>
+    <div class="chip">外部・広告を除く</div>
     <div class="chip gear">⚙</div>
     <div class="chip live" id="liveChip"></div>
   </div>
@@ -210,6 +210,9 @@ let state = {days:90, type:"all"};
 const fmt = n => (n||0).toLocaleString("en-US");
 const man = n => n>=10000 ? (n/10000).toFixed(n>=100000?0:1)+"万" : fmt(n);
 const daysAgo = ms => Math.floor((Date.now()-ms)/86400000);
+// XSS対策: 外部由来文字列(動画タイトル等)を innerHTML に入れる前に必ずエスケープ
+const esc = s => String(s==null?"":s).replace(/[&<>"']/g, c => (
+  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 function filtered(){
   const cut = Date.now() - state.days*86400000;
@@ -359,7 +362,7 @@ function renderLatest(){
       <span>👍 ${fmt(v.likes)}</span><span>💬 ${fmt(v.comments)}</span>
       <span>公開: ${daysAgo(v.published_ms)}日前</span></div>
     <div class="meta"><span>再生速度: <b style="color:var(--orD)">${man(v.velocity)} 回/日</b>（生涯平均）</span></div>
-    <div class="meta"><span style="line-height:1.4">${v.title}</span></div>`;
+    <div class="meta"><span style="line-height:1.4">${esc(v.title)}</span></div>`;
 }
 
 function renderRanking(){
@@ -369,8 +372,8 @@ function renderRanking(){
     <div class="rank-row ${i<3?'top':''}">
       <div class="no">${i+1}</div>
       <img src="${v.thumb}" loading="lazy">
-      <div class="tt">${v.title}
-        <div class="en">👍 ${fmt(v.likes)}　💬 ${fmt(v.comments)}${v.episode!=='—'?'　'+v.episode:''}</div></div>
+      <div class="tt">${esc(v.title)}
+        <div class="en">👍 ${fmt(v.likes)}　💬 ${fmt(v.comments)}${v.episode!=='—'?'　'+esc(v.episode):''}</div></div>
       <div class="vv">${man(v.views)}</div>
     </div>`).join("") || '<div class="muted">対象なし</div>';
 }
