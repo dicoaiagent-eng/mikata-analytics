@@ -225,8 +225,8 @@ def main():
     # 検索流入(累計): KPI主役。snapshots 最新の検索流入数合計（外部の影響を受けない）
     search_inflow_total = int(latest["検索流入数"].fillna(0).sum()) if not latest.empty else 0
 
-    tab_sum, tab_cat, tab_deep, tab_grow, tab_anal, tab_kw = st.tabs(
-        ["サマリー", "カタログ", "ディープダイブ", "伸び比較", "分析", "検索キーワード"]
+    tab_sum, tab_cat, tab_deep, tab_grow, tab_year, tab_anal, tab_kw = st.tabs(
+        ["サマリー", "カタログ", "ディープダイブ", "伸び比較", "年度比較", "分析", "検索キーワード"]
     )
     with tab_sum:
         _tab_summary(master, channel_hist, search_inflow_total)
@@ -236,6 +236,8 @@ def main():
         _tab_deepdive(master, snap, latest_ret, hourly, terms)
     with tab_grow:
         _tab_growth(master, snap, hourly, latest_ret)
+    with tab_year:
+        _tab_year(master)
     with tab_anal:
         _tab_analysis(master, latest_ret, include_noise)
     with tab_kw:
@@ -759,6 +761,89 @@ def _growth_compare(master, snap, hourly, latest_ret):
                     help="蓄積された観測点の数。多いほどカーブが滑らかになります。"),
             },
         )
+
+
+# ───────────────────────── 年度・シリーズ比較 ─────────────────────────
+
+def _year_compare_table(df, a, b):
+    rows = []
+    for s in (a, b):
+        d = df[df["シリーズ"] == s]
+        v = d["views"]
+        rows.append({
+            "シリーズ": s,
+            "本数": f"{len(d)}",
+            "合計再生": f"{int(v.sum()):,}",
+            "中央値再生": f"{int(v.median()):,}" if len(d) else "—",
+            "平均再生": f"{int(v.mean()):,}" if len(d) else "—",
+            "最高再生": f"{int(v.max()):,}" if len(d) else "—",
+            "平均高評価率": f"{d['高評価率'].mean()*100:.2f}%" if len(d) else "—",
+            "平均コメント率": f"{d['コメント率'].mean()*100:.2f}%" if len(d) else "—",
+        })
+    return pd.DataFrame(rows).set_index("シリーズ").T
+
+
+def _tab_year(master):
+    st.subheader("年度・シリーズ比較")
+    st.caption("YouTube公式のライブ統計（再生/高評価/コメント）でシリーズを年度横断比較。"
+               "高評価率・コメント率は年度をまたいで比べられる公開エンゲージ指標です。")
+    ids = list(master["video_id"])
+    chan, stats = fetch_live(tuple(ids))
+    if not stats:
+        st.info("ライブ統計を取得できませんでした（Secrets / CHANNEL_ID を確認）。")
+        return
+    df = ins.video_stats_df(master, stats)
+    if df.empty:
+        st.info("対象データがありません。")
+        return
+
+    # ① シリーズ別サマリー（年度順）
+    with st.container(border=True):
+        st.markdown("#### シリーズ別サマリー（年度順）")
+        summ = ins.series_summary(df)
+        st.dataframe(
+            summ[["年度", "シリーズ", "本数", "中央値再生", "合計再生", "平均高評価率%", "平均コメント率%"]],
+            width="stretch", hide_index=True,
+            column_config={
+                "中央値再生": st.column_config.NumberColumn(format="%d"),
+                "合計再生": st.column_config.NumberColumn(format="%d"),
+                "平均高評価率%": st.column_config.NumberColumn(format="%.2f%%"),
+                "平均コメント率%": st.column_config.NumberColumn(format="%.2f%%"),
+            })
+
+    # ② シリーズ年度 直接対比
+    with st.container(border=True):
+        st.markdown("#### シリーズ年度 直接対比")
+        opts = [s for s in summ["シリーズ"].tolist() if s and s != "—"]
+        if len(opts) < 2:
+            st.info("比較できるシリーズが不足しています。")
+            return
+        defA = next((s for s in opts if "2026" in s), opts[0])
+        defB = next((s for s in opts if "2025" in s and s != defA), None) \
+            or next((s for s in opts if s != defA), opts[0])
+        c = st.columns(2)
+        selA = c[0].selectbox("シリーズA", opts, index=opts.index(defA), key="yr_a")
+        selB = c[1].selectbox("シリーズB", opts, index=opts.index(defB), key="yr_b")
+        if selA == selB:
+            st.info("異なる2つのシリーズを選んでください。")
+            return
+
+        st.dataframe(_year_compare_table(df, selA, selB), width="stretch")
+
+        sub = df[df["シリーズ"].isin([selA, selB])].copy()
+        sub["公開順"] = (sub.sort_values("公開日時").groupby("シリーズ").cumcount() + 1)
+        chart = (alt.Chart(sub).mark_line(point=alt.OverlayMarkDef(size=70, filled=True),
+                                          strokeWidth=3)
+                 .encode(x=alt.X("公開順:Q", title="シリーズ内の公開順（1本目→）"),
+                         y=alt.Y("views:Q", title="再生数"),
+                         color=alt.Color("シリーズ:N",
+                                         scale=alt.Scale(domain=[selA, selB],
+                                                         range=[PRIMARY, SECONDARY]),
+                                         legend=alt.Legend(orient="bottom")),
+                         tooltip=["シリーズ", "公開順", "短縮タイトル", "views", "likes", "comments"])
+                 .properties(height=380))
+        st.altair_chart(_style(chart), width="stretch")
+        st.caption("各年度シリーズの『N本目』の再生を重ね描き。年度ごとの立ち上がり・失速の違いが見えます。")
 
 
 # ───────────────────────── 分析 ─────────────────────────

@@ -360,3 +360,60 @@ def build_summary_payload(master, video_stats, channel_now, channel_hist, goal,
     }
 
     return {"channel": channel, "videos": videos, "latest": latest}
+
+
+# ───────────────────────── 年度・シリーズ比較 ─────────────────────────
+
+def video_stats_df(master, video_stats):
+    """master にライブ統計(views/likes/comments)を結合し、エンゲージ率・年度を付与。
+    公開60日超の旧動画(2025等)も対象になる（ライブ統計は全公開動画で取得可）。"""
+    if master.empty or not video_stats:
+        return pd.DataFrame()
+    rows = []
+    for _, r in master.iterrows():
+        s = video_stats.get(r["video_id"])
+        if not s:
+            continue
+        views = s.get("views", 0) or 0
+        rows.append({
+            "video_id": r["video_id"],
+            "短縮タイトル": r.get("短縮タイトル", ""),
+            "シリーズ": r.get("シリーズ", "—"),
+            "話数": r.get("話数", "—"),
+            "_epsort": r.get("_epsort", (9999, 9999)),
+            "公開日時": r.get("公開日時", ""),
+            "video_type": r.get("video_type", ""),
+            "views": int(views),
+            "likes": int(s.get("likes", 0) or 0),
+            "comments": int(s.get("comments", 0) or 0),
+            "高評価率": (s.get("likes", 0) / views) if views else 0.0,
+            "コメント率": (s.get("comments", 0) / views) if views else 0.0,
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    yr = df["シリーズ"].astype(str).str.extract(r"(20\d{2})")[0]
+    pub_yr = pd.to_datetime(df["公開日時"], errors="coerce").dt.year
+    df["年度"] = yr.fillna(pub_yr.astype("Int64").astype(str)).fillna("—")
+    df["サムネ"] = "https://i.ytimg.com/vi/" + df["video_id"] + "/mqdefault.jpg"
+    return df
+
+
+def series_summary(df):
+    """シリーズ別の本数・中央値再生・合計再生・平均エンゲージ率（年度付き）。"""
+    if df.empty:
+        return pd.DataFrame()
+    g = df.groupby("シリーズ").agg(
+        年度=("年度", "first"),
+        本数=("video_id", "count"),
+        中央値再生=("views", "median"),
+        合計再生=("views", "sum"),
+        平均高評価率=("高評価率", "mean"),
+        平均コメント率=("コメント率", "mean"),
+    ).reset_index()
+    g["中央値再生"] = g["中央値再生"].round(0).astype("Int64")
+    g["合計再生"] = g["合計再生"].astype("Int64")
+    g["平均高評価率%"] = (g["平均高評価率"] * 100).round(2)
+    g["平均コメント率%"] = (g["平均コメント率"] * 100).round(2)
+    return g.drop(columns=["平均高評価率", "平均コメント率"]).sort_values(
+        ["年度", "合計再生"], ascending=[False, False])
