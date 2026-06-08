@@ -256,7 +256,8 @@ def main():
     search_inflow_total = int(latest["検索流入数"].fillna(0).sum()) if not latest.empty else 0
 
     tabs = st.tabs(
-        ["サマリー", "カタログ", "ディープダイブ", "伸び比較", "年度比較", "競合比較", "分析", "検索キーワード"]
+        ["サマリー", "カタログ", "ディープダイブ", "伸び比較", "年度比較",
+         "競合比較", "素材バンク", "分析", "検索キーワード"]
     )
     with tabs[0]:
         _tab_summary(master, channel_hist, search_inflow_total)
@@ -271,8 +272,10 @@ def main():
     with tabs[5]:
         _tab_competitors()
     with tabs[6]:
-        _tab_analysis(master, latest_ret, include_noise)
+        _tab_bank(master)
     with tabs[7]:
+        _tab_analysis(master, latest_ret, include_noise)
+    with tabs[8]:
         _tab_keywords(terms, master)
 
 
@@ -934,6 +937,48 @@ def _tab_competitors():
                              tooltip=["チャンネル", "高評価率%", "コメント率%"]))
             st.altair_chart(_style(chart), width="stretch")
             st.caption("登録者が少なくてもエンゲージ率では上回れる余地。自社=オレンジ。")
+
+
+# ───────────────────────── まとめ素材バンク ─────────────────────────
+
+def _tab_bank(master):
+    st.subheader("まとめ素材バンク（テーマ→該当インタビュー）")
+    st.caption("勝ちテンプレ『保護者まとめ型』に再編集できる自社インタビュー素材。"
+               "テーマを開くと使えるクリップ候補が出ます。**再生数の高い回＝強い素材**なので上から採用候補。")
+    bank = ins.compilation_bank(master)
+    if not bank:
+        st.info("インタビュー素材が見つかりません。")
+        return
+    # ライブ再生数（強い回の判定用・10分キャッシュ共有）
+    _, stats = fetch_live(tuple(master["video_id"]))
+    suggest_map = {t: s for t, _, s in ins.COMPILATION_THEMES}
+
+    for theme, df in sorted(bank.items(), key=lambda x: -len(x[1])):
+        n = len(df)
+        with st.expander(f"📦 {theme}（{n}本）　💡 {suggest_map.get(theme, '')}", expanded=False):
+            if n == 0:
+                st.caption("該当素材なし。")
+                continue
+            d = df.copy()
+            d["サムネ"] = d["video_id"].map(_thumb)
+            d["リンク"] = "https://youtu.be/" + d["video_id"]
+            if stats:
+                d["再生"] = d["video_id"].map(lambda v: stats.get(v, {}).get("views"))
+                d = d.sort_values("再生", ascending=False, na_position="last")
+            else:
+                d["再生"] = pd.NA
+                d = d.sort_values("公開日時", ascending=False)
+            d["公開日"] = d["公開日時"].astype(str).str.slice(0, 10)
+            st.dataframe(
+                d[["サムネ", "話数", "短縮タイトル", "再生", "公開日", "リンク"]]
+                .rename(columns={"短縮タイトル": "タイトル"}),
+                width="stretch", hide_index=True,
+                column_config={
+                    "サムネ": st.column_config.ImageColumn("サムネ", width="small"),
+                    "タイトル": st.column_config.TextColumn("タイトル", width="large"),
+                    "再生": st.column_config.NumberColumn(format="%d"),
+                    "リンク": st.column_config.LinkColumn("リンク", display_text="開く"),
+                })
 
 
 # ───────────────────────── 分析 ─────────────────────────
