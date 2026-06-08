@@ -54,6 +54,20 @@ SUBSCRIBER_GOAL = 10000
 # 外部共有時の閲覧パスワード（.env / secrets の DASH_PASSWORD）。未設定なら認証なし。
 DASHBOARD_PASSWORD = _env("DASH_PASSWORD", "")
 
+# 競合比較の対象チャンネル（中学受験系・公開指標で比較）。自由に追加/削除可。
+COMPETITOR_CHANNEL_IDS = [
+    "UCLMmcT54e-pAIg80atX440g",  # にしむら先生 受験指導専門家
+    "UCpmIx1eakUt4zHDLTzUF7eA",  # 中学受験に向けた子育てch【伸学会菊池洋匡】
+    "UCVxg1EE8Efu6M2WyYg6zYPA",  # こばちゃん塾
+    "UCMsGJLObNXr1D85bOQRTwRQ",  # 佐藤ママチャンネル
+    "UCrzGSHJCmwNmFvfpveN1I-w",  # 中学受験のrestart
+    "UC3LgVYRHHKxo0RkziCsgp6g",  # けいたくチャンネル
+    "UC35PZPRvt3OBQ10dYj2k61w",  # ホンネで中学受験
+    "UC4l3tsbEKsVMQZGinyNrX7Q",  # 中学受験コベツバ
+    "UC42OqT3RNzSgOtvj27m0tRg",  # りゅうりゅうりゅう中学受験
+    "UCobcUEocQ90C4C3uZfqxGyg",  # テスティー中学受験チャンネル
+]
+
 # 認証ファイル
 CLIENT_SECRET = "client_secret.json"
 TOKEN_FILE = "token.json"

@@ -146,6 +146,36 @@ def fetch_live(video_ids):
         return None, {}
 
 
+@st.cache_data(ttl=21600)
+def fetch_competitors():
+    """自社＋競合チャンネルの公開指標をまとめて取得（6時間キャッシュ）。
+    クォータ: channels.list(1) + 各ch playlistItems(1)+videos.list(1) ≒ 2×ch数。約25 units。"""
+    import fetch_analytics as fa
+    try:
+        ids = [config.CHANNEL_ID] + list(config.COMPETITOR_CHANNEL_IDS)
+        stats = fa.get_channels_stats(ids)
+        rows = []
+        for cid in ids:
+            c = stats.get(cid)
+            if not c:
+                continue
+            rec = fa.get_recent_channel_videos(c["uploads"], n=20)
+            rows.append({
+                "チャンネル": c["title"][:22],
+                "自社": cid == config.CHANNEL_ID,
+                "登録者": c["subs"], "総再生": c["views"], "本数": c["videos"],
+                "直近中央値再生": int(rec.get("median_views", 0) or 0),
+                "直近平均再生": int(rec.get("avg_views", 0) or 0),
+                "高評価率%": round(rec.get("like_rate", 0) * 100, 2),
+                "コメント率%": round(rec.get("comment_rate", 0) * 100, 3),
+                "投稿/月": round(rec.get("uploads_per_month", 0), 1),
+            })
+        return pd.DataFrame(rows)
+    except Exception as e:  # noqa: BLE001
+        st.warning(f"競合データの取得に失敗: {e}")
+        return pd.DataFrame()
+
+
 @st.cache_data(ttl=600)
 def fetch_retention(video_id, start, end):
     """離脱曲線をライブ取得（10分キャッシュ）。失敗時は空リスト。"""
@@ -225,22 +255,24 @@ def main():
     # 検索流入(累計): KPI主役。snapshots 最新の検索流入数合計（外部の影響を受けない）
     search_inflow_total = int(latest["検索流入数"].fillna(0).sum()) if not latest.empty else 0
 
-    tab_sum, tab_cat, tab_deep, tab_grow, tab_year, tab_anal, tab_kw = st.tabs(
-        ["サマリー", "カタログ", "ディープダイブ", "伸び比較", "年度比較", "分析", "検索キーワード"]
+    tabs = st.tabs(
+        ["サマリー", "カタログ", "ディープダイブ", "伸び比較", "年度比較", "競合比較", "分析", "検索キーワード"]
     )
-    with tab_sum:
+    with tabs[0]:
         _tab_summary(master, channel_hist, search_inflow_total)
-    with tab_cat:
+    with tabs[1]:
         _tab_catalog(master, latest_ret, include_noise)
-    with tab_deep:
+    with tabs[2]:
         _tab_deepdive(master, snap, latest_ret, hourly, terms)
-    with tab_grow:
+    with tabs[3]:
         _tab_growth(master, snap, hourly, latest_ret)
-    with tab_year:
+    with tabs[4]:
         _tab_year(master)
-    with tab_anal:
+    with tabs[5]:
+        _tab_competitors()
+    with tabs[6]:
         _tab_analysis(master, latest_ret, include_noise)
-    with tab_kw:
+    with tabs[7]:
         _tab_keywords(terms, master)
 
 
@@ -844,6 +876,64 @@ def _tab_year(master):
                  .properties(height=380))
         st.altair_chart(_style(chart), width="stretch")
         st.caption("各年度シリーズの『N本目』の再生を重ね描き。年度ごとの立ち上がり・失速の違いが見えます。")
+
+
+# ───────────────────────── 競合比較 ─────────────────────────
+
+def _tab_competitors():
+    st.subheader("競合比較（公開指標）")
+    st.caption("中学受験系チャンネルの公開指標で比較。直近20本から中央値/平均再生・エンゲージ率・投稿頻度を算出。"
+               "※競合の視聴維持率・流入元・CTR・登録転換は非公開のため取得不可（自社のみ）。対象は config で編集可。")
+    df = fetch_competitors()
+    if df.empty:
+        st.info("競合データを取得できませんでした（CHANNEL_ID / クォータを確認）。")
+        return
+
+    with st.container(border=True):
+        st.markdown("#### 一覧（登録者順）")
+        show = df.sort_values("登録者", ascending=False).copy()
+        show["区分"] = show["自社"].map(lambda x: "★自社" if x else "競合")
+        st.dataframe(
+            show[["区分", "チャンネル", "登録者", "総再生", "本数",
+                  "直近中央値再生", "高評価率%", "コメント率%", "投稿/月"]],
+            width="stretch", hide_index=True,
+            column_config={
+                "登録者": st.column_config.NumberColumn(format="%d"),
+                "総再生": st.column_config.NumberColumn(format="%d"),
+                "本数": st.column_config.NumberColumn(format="%d"),
+                "直近中央値再生": st.column_config.NumberColumn(format="%d"),
+                "高評価率%": st.column_config.NumberColumn(format="%.2f%%"),
+                "コメント率%": st.column_config.NumberColumn(format="%.3f%%"),
+                "投稿/月": st.column_config.NumberColumn(format="%.1f"),
+            })
+
+    cc = st.columns(2)
+    with cc[0]:
+        with st.container(border=True):
+            st.markdown("#### ポジショニング（登録者 × 直近中央値再生）")
+            d = df.copy()
+            d["区分"] = d["自社"].map(lambda x: "自社" if x else "競合")
+            pts = (alt.Chart(d).mark_circle(size=150, opacity=0.8)
+                   .encode(x=alt.X("登録者:Q", scale=alt.Scale(type="log"), title="登録者数（対数）"),
+                           y=alt.Y("直近中央値再生:Q", title="直近中央値 再生"),
+                           color=alt.Color("区分:N",
+                                           scale=alt.Scale(domain=["自社", "競合"], range=[PRIMARY, SECONDARY])),
+                           tooltip=["チャンネル", "登録者", "直近中央値再生", "高評価率%", "投稿/月"]))
+            label = (alt.Chart(d[d["自社"]]).mark_text(dy=-14, fontWeight="bold", color=PRIMARY_D)
+                     .encode(x=alt.X("登録者:Q", scale=alt.Scale(type="log")),
+                             y="直近中央値再生:Q", text="チャンネル"))
+            st.altair_chart(_style(pts + label), width="stretch")
+            st.caption("自社=オレンジ。左下から右上へ伸ばすのが成長。")
+    with cc[1]:
+        with st.container(border=True):
+            st.markdown("#### エンゲージ率（高評価率）")
+            d = df.sort_values("高評価率%", ascending=False)
+            chart = (alt.Chart(d).mark_bar()
+                     .encode(x=alt.X("高評価率%:Q"), y=alt.Y("チャンネル:N", sort="-x"),
+                             color=alt.condition("datum.自社", alt.value(PRIMARY), alt.value(SECONDARY)),
+                             tooltip=["チャンネル", "高評価率%", "コメント率%"]))
+            st.altair_chart(_style(chart), width="stretch")
+            st.caption("登録者が少なくてもエンゲージ率では上回れる余地。自社=オレンジ。")
 
 
 # ───────────────────────── 分析 ─────────────────────────

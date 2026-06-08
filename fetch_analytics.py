@@ -222,6 +222,68 @@ def get_video_metrics(video_id, start, end):
             "subs_gained": v[3], "subs_lost": v[4]}
 
 
+def get_channels_stats(channel_ids):
+    """複数チャンネルの公開統計 {id: {title, subs, views, videos, uploads}} をバッチ取得。"""
+    out = {}
+    for i in range(0, len(channel_ids), 50):
+        chunk = channel_ids[i:i + 50]
+        res = _yt_data.channels().list(
+            part="statistics,snippet,contentDetails", id=",".join(chunk),
+        ).execute()
+        for it in res.get("items", []):
+            s = it.get("statistics", {})
+            out[it["id"]] = {
+                "title": it["snippet"]["title"],
+                "subs": int(s.get("subscriberCount", 0)),
+                "views": int(s.get("viewCount", 0)),
+                "videos": int(s.get("videoCount", 0)),
+                "uploads": it["contentDetails"]["relatedPlaylists"]["uploads"],
+            }
+    return out
+
+
+def get_recent_channel_videos(uploads_playlist, n=20):
+    """uploads再生リストの直近 **公開** 動画nの統計（直近平均再生・エンゲージ率・投稿頻度）。
+    自社の uploads は限定公開/非公開も含むため、status=public のみに絞って公平比較する。"""
+    res = _yt_data.playlistItems().list(
+        part="contentDetails", playlistId=uploads_playlist, maxResults=min(n * 2, 50),
+    ).execute()
+    vids = [it["contentDetails"]["videoId"] for it in res.get("items", [])]
+    if not vids:
+        return {"n": 0}
+    r = _yt_data.videos().list(part="statistics,snippet,status", id=",".join(vids)).execute()
+    by_id = {it["id"]: it for it in r.get("items", [])}
+    views, likes, comments, dates = [], [], [], []
+    for vid in vids:  # 再生リスト順（新しい順）を維持
+        it = by_id.get(vid)
+        if not it or it.get("status", {}).get("privacyStatus") != "public":
+            continue
+        st = it.get("statistics", {})
+        views.append(int(st.get("viewCount", 0)))
+        likes.append(int(st.get("likeCount", 0)))
+        comments.append(int(st.get("commentCount", 0)))
+        dates.append(it["snippet"]["publishedAt"])
+        if len(views) >= n:
+            break
+    if not views:
+        return {"n": 0}
+    import statistics as _stat
+    span_days = 0.0
+    if len(dates) >= 2:
+        ds = sorted(_parse_iso(d) for d in dates)
+        span_days = (ds[-1] - ds[0]).total_seconds() / 86400.0
+    cadence = (len(views) - 1) / span_days * 30 if span_days > 0 else 0.0
+    tot_v = sum(views) or 1
+    return {
+        "n": len(views),
+        "avg_views": sum(views) / len(views),
+        "median_views": _stat.median(views),
+        "like_rate": sum(likes) / tot_v,
+        "comment_rate": sum(comments) / tot_v,
+        "uploads_per_month": cadence,
+    }
+
+
 def get_retention_curve(video_id, start, end):
     """視聴者維持の離脱曲線。[(再生位置0-1, 維持率, 相対パフォーマンス), ...]"""
     res = _yt_analytics.reports().query(
