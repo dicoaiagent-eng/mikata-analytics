@@ -223,6 +223,7 @@ def main():
     hourly = ins.clean_hourly(load_sheet("hourly_views"))
     channel_hist = load_sheet("channel_stats")
     video_metrics = load_sheet("video_metrics")
+    video_retention = load_sheet("video_retention")
 
     if master.empty:
         st.title("中学受験のミカタ アナリティクス")
@@ -268,7 +269,7 @@ def main():
     with tabs[3]:
         _tab_growth(master, snap, hourly, latest_ret)
     with tabs[4]:
-        _tab_year(master)
+        _tab_year(master, video_retention)
     with tabs[5]:
         _tab_competitors()
     with tabs[6]:
@@ -800,53 +801,62 @@ def _growth_compare(master, snap, hourly, latest_ret):
 
 # ───────────────────────── 年度・シリーズ比較 ─────────────────────────
 
-def _year_compare_table(df, a, b):
-    rows = []
-    for s in (a, b):
-        d = df[df["シリーズ"] == s]
-        v = d["views"]
-        rows.append({
-            "シリーズ": s,
-            "本数": f"{len(d)}",
-            "合計再生": f"{int(v.sum()):,}",
-            "中央値再生": f"{int(v.median()):,}" if len(d) else "—",
-            "平均再生": f"{int(v.mean()):,}" if len(d) else "—",
-            "最高再生": f"{int(v.max()):,}" if len(d) else "—",
-            "平均高評価率": f"{d['高評価率'].mean()*100:.2f}%" if len(d) else "—",
-            "平均コメント率": f"{d['コメント率'].mean()*100:.2f}%" if len(d) else "—",
-        })
-    return pd.DataFrame(rows).set_index("シリーズ").T
+def _series_metrics(df, s):
+    d = df[df["シリーズ"] == s]
+    v = d["views"]
+    ret = pd.to_numeric(d.get("視聴維持率"), errors="coerce").dropna() if "視聴維持率" in d else pd.Series(dtype=float)
+    return {
+        "本数": len(d),
+        "中央値再生": int(v.median()) if len(d) else 0,
+        "高評価率": d["高評価率"].mean() * 100 if len(d) else 0.0,
+        "視聴維持率": ret.mean() if len(ret) else None,
+        "最高再生": int(v.max()) if len(d) else 0,
+    }
 
 
-def _tab_year(master):
+def _tab_year(master, video_retention=None):
     st.subheader("年度・シリーズ比較")
-    st.caption("YouTube公式のライブ統計（再生/高評価/コメント）でシリーズを年度横断比較。"
-               "高評価率・コメント率は年度をまたいで比べられる公開エンゲージ指標です。")
+    st.caption("シリーズを年度横断で比較。**平均視聴維持率**（averageViewPercentage）も併記し、"
+               "再生だけでなく“最後まで見られているか”の質も比べられます。")
     ids = list(master["video_id"])
     chan, stats = fetch_live(tuple(ids))
     if not stats:
         st.info("ライブ統計を取得できませんでした（Secrets / CHANNEL_ID を確認）。")
         return
-    df = ins.video_stats_df(master, stats)
+    ret = ins.retention_map(video_retention)
+    df = ins.video_stats_df(master, stats, ret)
     if df.empty:
         st.info("対象データがありません。")
         return
+    summ = ins.series_summary(df)
+    has_ret = "平均維持率%" in summ.columns
 
-    # ① シリーズ別サマリー（年度順）
+    # ① シリーズ別サマリー（表＋ビジュアルバー）
     with st.container(border=True):
         st.markdown("#### シリーズ別サマリー（年度順）")
-        summ = ins.series_summary(df)
+        show_cols = ["年度", "シリーズ", "本数", "中央値再生", "合計再生", "平均高評価率%"]
+        if has_ret:
+            show_cols.append("平均維持率%")
+        show_cols.append("平均コメント率%")
         st.dataframe(
-            summ[["年度", "シリーズ", "本数", "中央値再生", "合計再生", "平均高評価率%", "平均コメント率%"]],
-            width="stretch", hide_index=True,
+            summ[show_cols], width="stretch", hide_index=True,
             column_config={
                 "中央値再生": st.column_config.NumberColumn(format="%d"),
                 "合計再生": st.column_config.NumberColumn(format="%d"),
                 "平均高評価率%": st.column_config.NumberColumn(format="%.2f%%"),
                 "平均コメント率%": st.column_config.NumberColumn(format="%.2f%%"),
+                "平均維持率%": st.column_config.NumberColumn(format="%.1f%%",
+                                                        help="averageViewPercentage 平均"),
             })
+        bar = (alt.Chart(summ).mark_bar()
+               .encode(x=alt.X("中央値再生:Q", title="中央値 再生"),
+                       y=alt.Y("シリーズ:N", sort="-x"),
+                       color=alt.Color("年度:N", legend=alt.Legend(orient="bottom"),
+                                       scale=alt.Scale(scheme="oranges")),
+                       tooltip=["シリーズ", "年度", "本数", "中央値再生", "平均高評価率%"]))
+        st.altair_chart(_style(bar), width="stretch")
 
-    # ② シリーズ年度 直接対比
+    # ② シリーズ年度 直接対比（ビジュアル・メトリクスカード）
     with st.container(border=True):
         st.markdown("#### シリーズ年度 直接対比")
         opts = [s for s in summ["シリーズ"].tolist() if s and s != "—"]
@@ -857,13 +867,30 @@ def _tab_year(master):
         defB = next((s for s in opts if "2025" in s and s != defA), None) \
             or next((s for s in opts if s != defA), opts[0])
         c = st.columns(2)
-        selA = c[0].selectbox("シリーズA", opts, index=opts.index(defA), key="yr_a")
-        selB = c[1].selectbox("シリーズB", opts, index=opts.index(defB), key="yr_b")
+        selA = c[0].selectbox("シリーズA（基準）", opts, index=opts.index(defA), key="yr_a")
+        selB = c[1].selectbox("シリーズB（比較）", opts, index=opts.index(defB), key="yr_b")
         if selA == selB:
             st.info("異なる2つのシリーズを選んでください。")
             return
 
-        st.dataframe(_year_compare_table(df, selA, selB), width="stretch")
+        mA, mB = _series_metrics(df, selA), _series_metrics(df, selB)
+        cc = st.columns(2)
+        with cc[0]:
+            st.markdown(f"**A：{selA}**")
+            st.metric("本数", f"{mA['本数']}")
+            st.metric("中央値再生", f"{mA['中央値再生']:,}")
+            st.metric("平均視聴維持率", f"{mA['視聴維持率']:.1f}%" if mA['視聴維持率'] is not None else "—")
+            st.metric("高評価率", f"{mA['高評価率']:.2f}%")
+        with cc[1]:
+            st.markdown(f"**B：{selB}**（Aとの差）")
+            st.metric("本数", f"{mB['本数']}", delta=mB['本数'] - mA['本数'])
+            st.metric("中央値再生", f"{mB['中央値再生']:,}", delta=f"{mB['中央値再生']-mA['中央値再生']:+,}")
+            if mB['視聴維持率'] is not None and mA['視聴維持率'] is not None:
+                st.metric("平均視聴維持率", f"{mB['視聴維持率']:.1f}%",
+                          delta=f"{mB['視聴維持率']-mA['視聴維持率']:+.1f}pt")
+            else:
+                st.metric("平均視聴維持率", f"{mB['視聴維持率']:.1f}%" if mB['視聴維持率'] is not None else "—")
+            st.metric("高評価率", f"{mB['高評価率']:.2f}%", delta=f"{mB['高評価率']-mA['高評価率']:+.2f}pt")
 
         sub = df[df["シリーズ"].isin([selA, selB])].copy()
         sub["公開順"] = (sub.sort_values("公開日時").groupby("シリーズ").cumcount() + 1)
@@ -875,10 +902,10 @@ def _tab_year(master):
                                          scale=alt.Scale(domain=[selA, selB],
                                                          range=[PRIMARY, SECONDARY]),
                                          legend=alt.Legend(orient="bottom")),
-                         tooltip=["シリーズ", "公開順", "短縮タイトル", "views", "likes", "comments"])
-                 .properties(height=380))
+                         tooltip=["シリーズ", "公開順", "短縮タイトル", "views"])
+                 .properties(height=360))
         st.altair_chart(_style(chart), width="stretch")
-        st.caption("各年度シリーズの『N本目』の再生を重ね描き。年度ごとの立ち上がり・失速の違いが見えます。")
+        st.caption("各年度シリーズの『N本目』の再生を重ね描き。デルタは緑=増/赤=減（Streamlit標準）。")
 
 
 # ───────────────────────── 競合比較 ─────────────────────────

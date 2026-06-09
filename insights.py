@@ -364,11 +364,22 @@ def build_summary_payload(master, video_stats, channel_now, channel_hist, goal,
 
 # ───────────────────────── 年度・シリーズ比較 ─────────────────────────
 
-def video_stats_df(master, video_stats):
-    """master にライブ統計(views/likes/comments)を結合し、エンゲージ率・年度を付与。
+def retention_map(video_retention):
+    """video_retention シート → {video_id: 視聴維持率%}。"""
+    if video_retention is None or video_retention.empty or "視聴維持率" not in video_retention.columns:
+        return {}
+    v = video_retention.copy()
+    v["視聴維持率"] = pd.to_numeric(v["視聴維持率"], errors="coerce")
+    v = v.dropna(subset=["視聴維持率"])
+    return dict(zip(v["video_id"], v["視聴維持率"]))
+
+
+def video_stats_df(master, video_stats, retention=None):
+    """master にライブ統計(views/likes/comments)を結合し、エンゲージ率・年度・維持率を付与。
     公開60日超の旧動画(2025等)も対象になる（ライブ統計は全公開動画で取得可）。"""
     if master.empty or not video_stats:
         return pd.DataFrame()
+    retention = retention or {}
     rows = []
     for _, r in master.iterrows():
         s = video_stats.get(r["video_id"])
@@ -388,6 +399,7 @@ def video_stats_df(master, video_stats):
             "comments": int(s.get("comments", 0) or 0),
             "高評価率": (s.get("likes", 0) / views) if views else 0.0,
             "コメント率": (s.get("comments", 0) / views) if views else 0.0,
+            "視聴維持率": retention.get(r["video_id"]),  # % (無ければ NaN)
         })
     df = pd.DataFrame(rows)
     if df.empty:
@@ -403,20 +415,26 @@ def series_summary(df):
     """シリーズ別の本数・中央値再生・合計再生・平均エンゲージ率（年度付き）。"""
     if df.empty:
         return pd.DataFrame()
-    g = df.groupby("シリーズ").agg(
+    agg = dict(
         年度=("年度", "first"),
         本数=("video_id", "count"),
         中央値再生=("views", "median"),
         合計再生=("views", "sum"),
         平均高評価率=("高評価率", "mean"),
         平均コメント率=("コメント率", "mean"),
-    ).reset_index()
+    )
+    if "視聴維持率" in df.columns:
+        agg["平均維持率"] = ("視聴維持率", "mean")
+    g = df.groupby("シリーズ").agg(**agg).reset_index()
     g["中央値再生"] = g["中央値再生"].round(0).astype("Int64")
     g["合計再生"] = g["合計再生"].astype("Int64")
     g["平均高評価率%"] = (g["平均高評価率"] * 100).round(2)
     g["平均コメント率%"] = (g["平均コメント率"] * 100).round(2)
-    return g.drop(columns=["平均高評価率", "平均コメント率"]).sort_values(
-        ["年度", "合計再生"], ascending=[False, False])
+    drop = ["平均高評価率", "平均コメント率"]
+    if "平均維持率" in g.columns:
+        g["平均維持率%"] = g["平均維持率"].round(1)
+        drop.append("平均維持率")
+    return g.drop(columns=drop).sort_values(["年度", "合計再生"], ascending=[False, False])
 
 
 # ───────────────────────── まとめ素材バンク ─────────────────────────
