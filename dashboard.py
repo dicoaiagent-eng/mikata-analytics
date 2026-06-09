@@ -945,6 +945,13 @@ def _tab_bank(master):
     st.subheader("まとめ素材バンク（テーマ→該当インタビュー）")
     st.caption("勝ちテンプレ『保護者まとめ型』に再編集できる自社インタビュー素材。"
                "テーマを開くと使えるクリップ候補が出ます。**再生数の高い回＝強い素材**なので上から採用候補。")
+    try:
+        _bank_body(master)
+    except Exception as e:  # noqa: BLE001
+        st.warning(f"素材バンクの表示でエラーが発生しました（他タブには影響しません）: {type(e).__name__}: {e}")
+
+
+def _bank_body(master):
     bank = ins.compilation_bank(master)
     if not bank:
         st.info("インタビュー素材が見つかりません。")

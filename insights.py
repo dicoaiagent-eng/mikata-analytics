@@ -447,16 +447,23 @@ COMPILATION_THEMES = [
 
 
 def compilation_bank(master):
-    """テーマ → 該当インタビュー動画(DataFrame) の辞書を返す。"""
-    if master.empty or "シリーズ" not in master.columns:
+    """テーマ → 該当インタビュー動画(DataFrame) の辞書を返す。
+    pandas のバージョン差や欠損列に左右されないよう堅牢に実装。"""
+    if master is None or master.empty or "シリーズ" not in master.columns:
         return {}
     iv = master[master["シリーズ"].astype(str).str.contains("インタビュー", na=False)].copy()
     if iv.empty:
         return {}
-    blob = (iv["タイトル"].astype(str) + " " + iv.get("説明文", "").astype(str)).map(norm)
+
+    def _col(name):  # 列が無くても安全に空文字Seriesを返す
+        if name in iv.columns:
+            return iv[name].astype(str)
+        return pd.Series([""] * len(iv), index=iv.index)
+
+    blob = (_col("タイトル") + " " + _col("説明文")).map(norm)
+    want = [c for c in ["video_id", "短縮タイトル", "話数", "シリーズ", "公開日時"] if c in iv.columns]
     out = {}
     for theme, kws, _ in COMPILATION_THEMES:
-        pat = "|".join(re.escape(k) for k in kws)
-        mask = blob.str.contains(pat, regex=True, na=False)
-        out[theme] = iv[mask][["video_id", "短縮タイトル", "話数", "シリーズ", "公開日時"]].copy()
+        mask = blob.apply(lambda t: any(k in t for k in kws))  # 正規表現非依存で確実
+        out[theme] = iv.loc[mask, want].copy()
     return out
