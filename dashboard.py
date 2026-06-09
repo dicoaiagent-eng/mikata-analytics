@@ -160,12 +160,16 @@ def fetch_competitors():
             if not c:
                 continue
             rec = fa.get_recent_channel_videos(c["uploads"], n=20)
+            med = int(rec.get("median_views", 0) or 0)
+            subs = c["subs"] or 0
             rows.append({
                 "チャンネル": c["title"][:22],
                 "自社": cid == config.CHANNEL_ID,
-                "登録者": c["subs"], "総再生": c["views"], "本数": c["videos"],
-                "直近中央値再生": int(rec.get("median_views", 0) or 0),
+                "登録者": subs, "総再生": c["views"], "本数": c["videos"],
+                "直近中央値再生": med,
                 "直近平均再生": int(rec.get("avg_views", 0) or 0),
+                # 視聴率相当: 直近中央値再生 ÷ 登録者（登録者の何倍見られているか＝リーチ率）
+                "登録者比再生": round(med / subs, 2) if subs else 0.0,
                 "高評価率%": round(rec.get("like_rate", 0) * 100, 2),
                 "コメント率%": round(rec.get("comment_rate", 0) * 100, 3),
                 "投稿/月": round(rec.get("uploads_per_month", 0), 1),
@@ -848,13 +852,17 @@ def _tab_year(master, video_retention=None):
                 "平均維持率%": st.column_config.NumberColumn(format="%.1f%%",
                                                         help="averageViewPercentage 平均"),
             })
+        metric_opts = [c for c in ["中央値再生", "平均維持率%", "平均高評価率%", "平均コメント率%", "合計再生"]
+                       if c in summ.columns]
+        met = st.radio("バーで比較する指標", metric_opts, horizontal=True, key="yr_metric")
         bar = (alt.Chart(summ).mark_bar()
-               .encode(x=alt.X("中央値再生:Q", title="中央値 再生"),
+               .encode(x=alt.X(f"{met}:Q", title=met),
                        y=alt.Y("シリーズ:N", sort="-x"),
                        color=alt.Color("年度:N", legend=alt.Legend(orient="bottom"),
                                        scale=alt.Scale(scheme="oranges")),
-                       tooltip=["シリーズ", "年度", "本数", "中央値再生", "平均高評価率%"]))
+                       tooltip=["シリーズ", "年度", "本数"] + metric_opts))
         st.altair_chart(_style(bar), width="stretch")
+        st.caption("指標を切り替えて全シリーズ（全年度）を一括比較。色＝年度。")
 
     # ② シリーズ年度 直接対比（ビジュアル・メトリクスカード）
     with st.container(border=True):
@@ -863,49 +871,38 @@ def _tab_year(master, video_retention=None):
         if len(opts) < 2:
             st.info("比較できるシリーズが不足しています。")
             return
-        defA = next((s for s in opts if "2026" in s), opts[0])
-        defB = next((s for s in opts if "2025" in s and s != defA), None) \
-            or next((s for s in opts if s != defA), opts[0])
-        c = st.columns(2)
-        selA = c[0].selectbox("シリーズA（基準）", opts, index=opts.index(defA), key="yr_a")
-        selB = c[1].selectbox("シリーズB（比較）", opts, index=opts.index(defB), key="yr_b")
-        if selA == selB:
-            st.info("異なる2つのシリーズを選んでください。")
+        # 既定で「インタビュー」系シリーズ（=全年度のインタビュー）をすべて選択
+        iv_default = [s for s in opts if "インタビュー" in s] or opts
+        sels = st.multiselect("比較するシリーズ（年度）", opts, default=iv_default, key="yr_multi")
+        if len(sels) < 2:
+            st.info("2つ以上のシリーズを選んでください。")
             return
 
-        mA, mB = _series_metrics(df, selA), _series_metrics(df, selB)
-        cc = st.columns(2)
-        with cc[0]:
-            st.markdown(f"**A：{selA}**")
-            st.metric("本数", f"{mA['本数']}")
-            st.metric("中央値再生", f"{mA['中央値再生']:,}")
-            st.metric("平均視聴維持率", f"{mA['視聴維持率']:.1f}%" if mA['視聴維持率'] is not None else "—")
-            st.metric("高評価率", f"{mA['高評価率']:.2f}%")
-        with cc[1]:
-            st.markdown(f"**B：{selB}**（Aとの差）")
-            st.metric("本数", f"{mB['本数']}", delta=mB['本数'] - mA['本数'])
-            st.metric("中央値再生", f"{mB['中央値再生']:,}", delta=f"{mB['中央値再生']-mA['中央値再生']:+,}")
-            if mB['視聴維持率'] is not None and mA['視聴維持率'] is not None:
-                st.metric("平均視聴維持率", f"{mB['視聴維持率']:.1f}%",
-                          delta=f"{mB['視聴維持率']-mA['視聴維持率']:+.1f}pt")
-            else:
-                st.metric("平均視聴維持率", f"{mB['視聴維持率']:.1f}%" if mB['視聴維持率'] is not None else "—")
-            st.metric("高評価率", f"{mB['高評価率']:.2f}%", delta=f"{mB['高評価率']-mA['高評価率']:+.2f}pt")
+        # 全選択シリーズの指標を横並びカードで（4年度でも一覧できる）
+        mets = {s: _series_metrics(df, s) for s in sels}
+        mcols = st.columns(min(len(sels), 4))
+        for i, s in enumerate(sels):
+            m = mets[s]
+            with mcols[i % len(mcols)]:
+                st.markdown(f"**{s}**")
+                st.metric("本数", f"{m['本数']}")
+                st.metric("中央値再生", f"{m['中央値再生']:,}")
+                st.metric("視聴維持率", f"{m['視聴維持率']:.1f}%" if m['視聴維持率'] is not None else "—")
+                st.metric("高評価率", f"{m['高評価率']:.2f}%")
 
-        sub = df[df["シリーズ"].isin([selA, selB])].copy()
+        sub = df[df["シリーズ"].isin(sels)].copy()
         sub["公開順"] = (sub.sort_values("公開日時").groupby("シリーズ").cumcount() + 1)
-        chart = (alt.Chart(sub).mark_line(point=alt.OverlayMarkDef(size=70, filled=True),
+        cscale = alt.Scale(domain=sels, range=SERIES_CYCLE)
+        chart = (alt.Chart(sub).mark_line(point=alt.OverlayMarkDef(size=60, filled=True),
                                           strokeWidth=3)
                  .encode(x=alt.X("公開順:Q", title="シリーズ内の公開順（1本目→）"),
                          y=alt.Y("views:Q", title="再生数"),
-                         color=alt.Color("シリーズ:N",
-                                         scale=alt.Scale(domain=[selA, selB],
-                                                         range=[PRIMARY, SECONDARY]),
-                                         legend=alt.Legend(orient="bottom")),
+                         color=alt.Color("シリーズ:N", scale=cscale,
+                                         legend=alt.Legend(orient="bottom", columns=2)),
                          tooltip=["シリーズ", "公開順", "短縮タイトル", "views"])
-                 .properties(height=360))
+                 .properties(height=400))
         st.altair_chart(_style(chart), width="stretch")
-        st.caption("各年度シリーズの『N本目』の再生を重ね描き。デルタは緑=増/赤=減（Streamlit標準）。")
+        st.caption("各年度シリーズの『N本目』の再生を全年度重ね描き。立ち上がり・失速・維持率の年次変化を一望できます。")
 
 
 # ───────────────────────── 競合比較 ─────────────────────────
@@ -925,17 +922,21 @@ def _tab_competitors():
         show["区分"] = show["自社"].map(lambda x: "★自社" if x else "競合")
         st.dataframe(
             show[["区分", "チャンネル", "登録者", "総再生", "本数",
-                  "直近中央値再生", "高評価率%", "コメント率%", "投稿/月"]],
+                  "直近中央値再生", "登録者比再生", "高評価率%", "コメント率%", "投稿/月"]],
             width="stretch", hide_index=True,
             column_config={
                 "登録者": st.column_config.NumberColumn(format="%d"),
                 "総再生": st.column_config.NumberColumn(format="%d"),
                 "本数": st.column_config.NumberColumn(format="%d"),
                 "直近中央値再生": st.column_config.NumberColumn(format="%d"),
+                "登録者比再生": st.column_config.NumberColumn(
+                    format="%.2f", help="直近中央値再生 ÷ 登録者数（登録者の何倍見られているか＝視聴率/リーチ相当）"),
                 "高評価率%": st.column_config.NumberColumn(format="%.2f%%"),
                 "コメント率%": st.column_config.NumberColumn(format="%.3f%%"),
                 "投稿/月": st.column_config.NumberColumn(format="%.1f"),
             })
+        st.caption("**登録者比再生＝視聴率/リーチ相当**（登録者の何倍見られているか）。"
+                   "※競合の真の視聴維持率・CTRは非公開のため取得不可（公開データでの代替指標です）。")
 
     cc = st.columns(2)
     with cc[0]:
@@ -964,6 +965,18 @@ def _tab_competitors():
                              tooltip=["チャンネル", "高評価率%", "コメント率%"]))
             st.altair_chart(_style(chart), width="stretch")
             st.caption("登録者が少なくてもエンゲージ率では上回れる余地。自社=オレンジ。")
+
+    with st.container(border=True):
+        st.markdown("#### 視聴率相当（登録者比再生＝直近中央値再生 ÷ 登録者）")
+        d = df.sort_values("登録者比再生", ascending=False)
+        chart = (alt.Chart(d).mark_bar()
+                 .encode(x=alt.X("登録者比再生:Q", title="登録者の何倍見られているか"),
+                         y=alt.Y("チャンネル:N", sort="-x"),
+                         color=alt.condition("datum.自社", alt.value(PRIMARY), alt.value(SECONDARY)),
+                         tooltip=["チャンネル", "登録者", "直近中央値再生", "登録者比再生"]))
+        st.altair_chart(_style(chart), width="stretch")
+        st.caption("値が大きいほど“登録者数に対してよく見られている”＝発見・拡散が効いている。"
+                   "※競合の真の視聴維持率は非公開のため、公開データでの視聴率相当指標。自社=オレンジ。")
 
 
 # ───────────────────────── まとめ素材バンク ─────────────────────────
