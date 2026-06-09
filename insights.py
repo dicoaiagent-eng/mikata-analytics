@@ -72,6 +72,8 @@ def parse_episode(title):
             # 表記ゆれ吸収のため内部空白を除去（"2023 ミカタ生" → "2023ミカタ生"）
             series = re.sub(r"\s+", "", s).strip("　・|")
             break
+    # 「生インタビュー」と「インタビュー」を同一シリーズとして統一（年度表記も揃う）
+    series = series.replace("生インタビュー", "インタビュー")
     return series, ep_label, ep_sort
 
 
