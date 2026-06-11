@@ -16,3 +16,10 @@ secrets.generated.toml
 
 # ローカル専用Claude設定
 .claude/settings.local.json
+
+token_ga4.json
+
+# 分析の出力（非公開アナリティクス＝再生数/登録獲得等を含むため公開リポジトリに上げない）
+ga4-audit/
+output/
+.claude/scheduled_tasks.lock
